@@ -1,0 +1,62 @@
+name: CGV 예매 오픈 감시
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # GitHub 스케줄러 특성상 실제로는 5~15분 간격으로 늦게 뜰 수 있음
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "텔레그램 테스트 메시지 + 시간표 덤프만 실행"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cgv-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      CGV_SITE_NO: ${{ vars.CGV_SITE_NO }}
+      CGV_SITE_NAME: ${{ vars.CGV_SITE_NAME }}
+      CGV_DATE: ${{ vars.CGV_DATE }}
+      CGV_MOVIE_KEYWORD: ${{ vars.CGV_MOVIE_KEYWORD }}
+      CGV_EXCLUDE: ${{ vars.CGV_EXCLUDE }}
+      # 한 번 실행에서 약 4.5분 동안 60초 간격으로 반복 체크 → cron 공백을 메운다
+      LOOP_SECONDS: "270"
+      LOOP_INTERVAL: "60"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 이전 알림 상태 복원
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: cgv-state-${{ github.run_id }}
+          restore-keys: cgv-state-
+
+      - name: 테스트
+        if: ${{ inputs.test }}
+        run: python check.py --test
+
+      - name: 감시
+        if: ${{ !inputs.test }}
+        run: python check.py
+
+      - name: 알림 상태 저장
+        if: ${{ always() && !inputs.test && hashFiles('state.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: cgv-state-${{ github.run_id }}
